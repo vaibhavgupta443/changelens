@@ -288,11 +288,13 @@ public final class SnapshotDiffer {
         }
         DeclDelta decl = declDelta(o, n);
         boolean sameBody = o.alphaHash().equals(n.alphaHash());
+        // The method's own name is part of its declaration: callers break when it changes, so it is never a "local rename".
+        boolean renamed = !o.name().equals(n.name());
         Nature nature;
         BehaviorDelta beh = BehaviorDelta.none();
         if (o.normHash().equals(n.normHash())) {
             nature = Nature.COSMETIC;
-        } else if (sameBody && decl.isEmpty()) {
+        } else if (sameBody && decl.isEmpty() && !renamed) {
             nature = Nature.LOCAL_RENAME;
         } else if (sameBody) {
             nature = Nature.SIGNATURE;

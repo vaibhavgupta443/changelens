@@ -90,6 +90,18 @@ class SnapshotDifferTest {
         assertThat(cs.summary().methodsBehaviorChanged()).isZero();
     }
 
+    /** Found by replaying real ollama4j history: renaming a method (same body) was reported as "only local variables renamed". */
+    @Test
+    void renamingTheMethodItselfIsADeclarationChangeNotALocalRename() {
+        String v2 = SVC_V1.replace("cancel(", "cancelOrder(");
+        ChangeSet cs = SnapshotDiffer.diff(snap("a", "OrderService.java", SVC_V1, "OrderRepository.java", REPO),
+                snap("b", "OrderService.java", v2, "OrderRepository.java", REPO));
+        MethodChange m = method(type(cs, "OrderService"), "cancelOrder");
+        assertThat(m.nature()).isEqualTo(Nature.SIGNATURE);
+        assertThat(m.oldSignature()).contains("cancel(").doesNotContain("cancelOrder");
+        assertThat(cs.summary().methodsLocalRenameOnly()).isZero();
+    }
+
     @Test
     void addedBranchAndNewCallAreDescribedAsBehaviourDelta() {
         String v2 = SVC_V1.replace("repository.markCancelled(id);", """

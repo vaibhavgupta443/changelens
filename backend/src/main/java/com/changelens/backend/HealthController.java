@@ -31,9 +31,11 @@ public class HealthController {
             // If Python is not running, we don't crash - we report it as DOWN.
             aiStatus = Map.of("status", "DOWN");
         }
+        // the product still works without the AI service, so report DEGRADED instead of UP when it is down
+        String status = String.valueOf(aiStatus).contains("DOWN") ? "DEGRADED" : "UP";
         return Map.of(
                 "service", "backend",
-                "status", "UP",
+                "status", status,
                 "aiService", aiStatus);
     }
 }

@@ -28,3 +28,14 @@ jobs:
       - uses: ./
         with:
           jar-path: backend/target/changelens-cli.jar
+
+  # The same thing through the published release, the way another repository would use it.
+  explain-released:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: vaibhavgupta443/changelens@v0.1.0
+        with:
+          comment: "false"   # the first job already posts the comment; this one checks the released action runs

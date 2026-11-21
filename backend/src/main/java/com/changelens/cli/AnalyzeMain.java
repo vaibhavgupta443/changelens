@@ -2,38 +2,65 @@ package com.changelens.cli;
 
 import com.changelens.core.diff.ChangeModel.ChangeSet;
 import com.changelens.core.diff.SnapshotDiffer;
+import com.changelens.core.flow.FlowModel.ImpactReport;
+import com.changelens.core.flow.ImpactAnalyzer;
 import com.changelens.core.ingest.GitSnapshotLoader;
-import com.changelens.core.model.CodeModel.CallSite;
-import com.changelens.core.model.CodeModel.Resolution;
 import com.changelens.core.model.CodeModel.Snapshot;
 import com.changelens.core.report.MarkdownReport;
+import com.changelens.core.report.PrComment;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.Map;
 
-/** Command-line entry: {@code AnalyzeMain <repoDir> <baseRev> <headRev>} prints the change report. */
+/**
+ * Command-line entry point, also what the GitHub Action runs.
+ *
+ * <pre>
+ * java -jar changelens-cli.jar --repo . --base origin/main --head HEAD [--format pr-comment|markdown] [--max-chars 60000] [--out report.md]
+ * </pre>
+ */
 public final class AnalyzeMain {
 
     private AnalyzeMain() {
     }
 
     public static void main(String[] args) throws Exception {
-        if (args.length < 3) {
-            System.err.println("usage: AnalyzeMain <repoDir> <baseRev> <headRev>");
-            System.exit(2);
+        Map<String, String> opt = parse(args);
+        if (opt.containsKey("help") || !opt.containsKey("base") || !opt.containsKey("head")) {
+            System.err.println("usage: changelens --repo <dir> --base <rev> --head <rev> [--format pr-comment|markdown] [--max-chars N] [--out file]");
+            System.exit(opt.containsKey("help") ? 0 : 2);
         }
-        Path repo = Path.of(args[0]);
+        Path repo = Path.of(opt.getOrDefault("repo", ".")).toAbsolutePath().normalize();
+        String name = repo.getFileName() == null ? "repo" : repo.getFileName().toString();
         long t0 = System.nanoTime();
-        Snapshot base = GitSnapshotLoader.load(repo, args[1], repo.getFileName().toString());
-        Snapshot head = GitSnapshotLoader.load(repo, args[2], repo.getFileName().toString());
-        long t1 = System.nanoTime();
+        Snapshot base = GitSnapshotLoader.load(repo, opt.get("base"), name);
+        Snapshot head = GitSnapshotLoader.load(repo, opt.get("head"), name);
         ChangeSet cs = SnapshotDiffer.diff(base, head);
-        long t2 = System.nanoTime();
-        System.out.println(MarkdownReport.render(cs));
-        long calls = head.types().values().stream().flatMap(t -> t.methods().stream()).flatMap(m -> m.facts().calls().stream()).count();
-        long resolved = head.types().values().stream().flatMap(t -> t.methods().stream()).flatMap(m -> m.facts().calls().stream())
-                .filter(c -> c.resolution() == Resolution.REPO).count();
-        long external = head.types().values().stream().flatMap(t -> t.methods().stream()).flatMap(m -> m.facts().calls().stream())
-                .filter((CallSite c) -> c.resolution() == Resolution.EXTERNAL).count();
-        System.err.printf("[stats] head: %d types, %d calls (%d in-repo, %d library, %d unresolved); load %d ms, diff %d ms%n",
-                head.types().size(), calls, resolved, external, calls - resolved - external, (t1 - t0) / 1_000_000, (t2 - t1) / 1_000_000);
+        ImpactReport impact = ImpactAnalyzer.analyze(head, cs);
+        String format = opt.getOrDefault("format", "pr-comment");
+        int max = Integer.parseInt(opt.getOrDefault("max-chars", "60000"));
+        String out = format.equals("markdown") ? MarkdownReport.render(cs) : PrComment.render(cs, impact, max);
+        if (opt.containsKey("out")) {
+            Files.writeString(Path.of(opt.get("out")), out, StandardCharsets.UTF_8);
+        } else {
+            System.out.println(out);
+        }
+        System.err.printf("[changelens] %d types changed, %d flows touched, %d ms%n", cs.types().size(), impact.flows().size(),
+                (System.nanoTime() - t0) / 1_000_000);
+    }
+
+    private static Map<String, String> parse(String[] args) {
+        Map<String, String> m = new HashMap<>();
+        for (int i = 0; i < args.length; i++) {
+            String a = args[i];
+            if (a.equals("-h") || a.equals("--help")) {
+                m.put("help", "1");
+            } else if (a.startsWith("--") && i + 1 < args.length) {
+                m.put(a.substring(2), args[++i]);
+            }
+        }
+        return m;
     }
 }

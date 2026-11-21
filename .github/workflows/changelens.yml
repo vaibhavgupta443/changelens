@@ -1,0 +1,30 @@
+# ChangeLens reviewing its own pull requests (and a working example for your own repository).
+name: ChangeLens
+
+on:
+  pull_request:
+    paths:
+      - "**.java"
+
+permissions:
+  contents: read
+  pull-requests: write   # lets ChangeLens post and update its comment
+
+jobs:
+  explain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # ChangeLens reads the base and head commits straight from git history
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - name: Build ChangeLens from this repository (development only)
+        working-directory: backend
+        run: ./mvnw -B -ntp -q -P cli -DskipTests package
+      - uses: ./
+        with:
+          jar-path: backend/target/changelens-cli.jar

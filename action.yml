@@ -7,17 +7,17 @@ branding:
 
 inputs:
   github-token:
-    description: "Token used to read the release and to post the comment. Use ${{ github.token }}."
+    description: "Token used to read the release and to post the comment. Defaults to the workflow token."
     required: false
-    default: ${{ github.token }}
+    default: ""
   base:
     description: "Base revision. Defaults to the pull request base commit."
     required: false
-    default: ${{ github.event.pull_request.base.sha }}
+    default: ""
   head:
     description: "Head revision. Defaults to the pull request head commit."
     required: false
-    default: ${{ github.event.pull_request.head.sha }}
+    default: ""
   comment:
     description: "Post (and keep updated) a comment on the pull request. Set to 'false' to only write the job summary."
     required: false
@@ -47,7 +47,7 @@ runs:
     - name: Get ChangeLens
       shell: bash
       env:
-        GH_TOKEN: ${{ inputs.github-token }}
+        GH_TOKEN: ${{ inputs.github-token || github.token }}
         JAR_PATH: ${{ inputs.jar-path }}
         VERSION: ${{ inputs.version }}
       run: |
@@ -66,8 +66,8 @@ runs:
     - name: Analyse the change
       shell: bash
       env:
-        BASE: ${{ inputs.base }}
-        HEAD: ${{ inputs.head }}
+        BASE: ${{ inputs.base || github.event.pull_request.base.sha }}
+        HEAD: ${{ inputs.head || github.event.pull_request.head.sha }}
         MAX: ${{ inputs.max-chars }}
       run: |
         set -euo pipefail
@@ -87,7 +87,7 @@ runs:
       if: ${{ inputs.comment == 'true' && github.event_name == 'pull_request' }}
       shell: bash
       env:
-        GH_TOKEN: ${{ inputs.github-token }}
+        GH_TOKEN: ${{ inputs.github-token || github.token }}
         REPO: ${{ github.repository }}
         PR: ${{ github.event.pull_request.number }}
       run: |

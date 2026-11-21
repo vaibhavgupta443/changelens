@@ -151,7 +151,7 @@ More in [docs/PRODUCT.md](docs/PRODUCT.md).
 - The "no test reaches this" check is also static; it recognises direct calls and tests that call an endpoint by URL.
 - The risk and ordering ideas are heuristics, not trained models.
 
-Measured on a labelled set of 52 before/after cases covering formatting, renames, moves, signature and logic changes: all 52 classified correctly after fixing four real bugs that a harder second set exposed (see [docs/EVALUATION.md](docs/EVALUATION.md), including what that does not prove). Also checked against real commits from spring-petclinic. Run it with `./mvnw test`.
+Measured on a labelled set of 52 before/after cases covering formatting, renames, moves, signature and logic changes: all 52 classified correctly after fixing four real bugs that a harder second set exposed (see [docs/EVALUATION.md](docs/EVALUATION.md), including what that does not prove). Replaying real history through it (150 commits of ollama4j and 40 of SootUp) it reported every commit that changed code and raised no false alarms, and it exposed one real bug (a renamed method was labelled as a skippable local rename), which is fixed. That check shows it notices changes, not that every description is right; the details and limits are in the evaluation page. Run the tests with `./mvnw test`.
 
 ## Build from source
 

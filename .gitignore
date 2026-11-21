@@ -21,3 +21,7 @@ target/
 
 # personal study material, not for the public repo
 docs/interview/
+
+# ChangeLens API data
+backend/data/
+backend/workspace/

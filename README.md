@@ -98,6 +98,30 @@ java -jar changelens-cli.jar --repo . --base origin/main --head HEAD
 
 Options: `--format pr-comment|markdown`, `--max-chars N`, `--out report.md`. Needs Java 21.
 
+## Run it as a service (REST API)
+
+The same engine is available as a Spring Boot service that stores every analysis, so a team can ask "what did this change do?" without running a CLI.
+
+```bash
+cd backend
+CHANGELENS_WORKSPACE=/path/to/folder-with-your-repos ./mvnw spring-boot:run
+```
+
+```bash
+# start an analysis of two revisions of the repository folder "my-app" (202 Accepted + Location header)
+curl -X POST localhost:8080/api/analyses -H 'Content-Type: application/json' \
+     -d '{"repo":"my-app","base":"origin/main","head":"HEAD"}'
+
+curl localhost:8080/api/analyses/<id>                       # status, timings, counts
+curl "localhost:8080/api/analyses/<id>/report?format=markdown"   # or format=pr-comment
+curl "localhost:8080/api/analyses?size=20"                  # recent analyses, newest first
+```
+
+- A request names a repository **folder inside the workspace**, never a path. Names such as `../x` and revisions that could be read as git options are rejected, and the resolved path is checked again to stay inside the workspace.
+- Analyses run on a small worker pool with a bounded queue (`changelens.workers`, `changelens.queue`); when it is full the API answers `429` instead of growing without limit. A run interrupted by a restart is marked `FAILED`.
+- Results are stored with JPA in a local H2 file by default. Set `CHANGELENS_DB_URL` (and the usual `spring.datasource.*` settings) to use PostgreSQL.
+- Errors are RFC 7807 problem documents.
+
 ## What it tells you
 
 | Level | What you see |
@@ -139,7 +163,7 @@ cd backend
 
 ## Roadmap
 
-- Visual web UI (interactive package > class > method map)
+- Visual web UI (interactive package > class > method map) on top of the REST API
 - Optional plain-English narration where every sentence cites a fact (the `ai-service/` folder holds early, experimental building blocks and is not used by the Action)
 - Multi-repository changes: match HTTP and message contracts across repos
 - CODEOWNERS routing, policy rules, audit log

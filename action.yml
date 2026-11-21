@@ -1,0 +1,106 @@
+name: "ChangeLens"
+description: "Explains what a Java pull request really does: changed packages, classes and methods, new behaviour, and which endpoints are affected."
+author: "Vaibhav Gupta"
+branding:
+  icon: "search"
+  color: "blue"
+
+inputs:
+  github-token:
+    description: "Token used to read the release and to post the comment. Use ${{ github.token }}."
+    required: false
+    default: ${{ github.token }}
+  base:
+    description: "Base revision. Defaults to the pull request base commit."
+    required: false
+    default: ${{ github.event.pull_request.base.sha }}
+  head:
+    description: "Head revision. Defaults to the pull request head commit."
+    required: false
+    default: ${{ github.event.pull_request.head.sha }}
+  comment:
+    description: "Post (and keep updated) a comment on the pull request. Set to 'false' to only write the job summary."
+    required: false
+    default: "true"
+  max-chars:
+    description: "Maximum comment length (GitHub's limit is 65536)."
+    required: false
+    default: "60000"
+  version:
+    description: "ChangeLens release to use, for example v0.1.0. 'latest' uses the newest release."
+    required: false
+    default: "latest"
+  jar-path:
+    description: "Use this local ChangeLens JAR instead of downloading a release (for development)."
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: "21"
+
+    - name: Get ChangeLens
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        JAR_PATH: ${{ inputs.jar-path }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/changelens"
+        if [ -n "$JAR_PATH" ]; then
+          cp "$JAR_PATH" "$RUNNER_TEMP/changelens/changelens-cli.jar"
+        else
+          if [ "$VERSION" = "latest" ]; then
+            gh release download --repo vaibhavgupta443/changelens --pattern changelens-cli.jar --dir "$RUNNER_TEMP/changelens" --clobber
+          else
+            gh release download "$VERSION" --repo vaibhavgupta443/changelens --pattern changelens-cli.jar --dir "$RUNNER_TEMP/changelens" --clobber
+          fi
+        fi
+
+    - name: Analyse the change
+      shell: bash
+      env:
+        BASE: ${{ inputs.base }}
+        HEAD: ${{ inputs.head }}
+        MAX: ${{ inputs.max-chars }}
+      run: |
+        set -euo pipefail
+        if [ -z "$BASE" ] || [ -z "$HEAD" ]; then
+          echo "::error::ChangeLens needs a base and a head revision. Run it on pull_request events, or pass the base and head inputs."
+          exit 1
+        fi
+        if ! git rev-parse --verify "$BASE^{commit}" >/dev/null 2>&1; then
+          echo "::error::The base commit is not available. Use actions/checkout with fetch-depth: 0."
+          exit 1
+        fi
+        java -jar "$RUNNER_TEMP/changelens/changelens-cli.jar" --repo . --base "$BASE" --head "$HEAD" --format pr-comment --max-chars "$MAX" --out "$RUNNER_TEMP/changelens/report.md"
+        # the job summary has room for the full report; the comment is shortened to GitHub's limit
+        cat "$RUNNER_TEMP/changelens/report.md" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Comment on the pull request
+      if: ${{ inputs.comment == 'true' && github.event_name == 'pull_request' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        PR: ${{ github.event.pull_request.number }}
+      run: |
+        set -uo pipefail
+        BODY_FILE="$RUNNER_TEMP/changelens/report.md"
+        # one sticky comment, found by its hidden marker and updated in place on every push
+        ID=$(gh api "repos/$REPO/issues/$PR/comments" --paginate --jq '.[] | select(.body | contains("<!-- changelens-report -->")) | .id' 2>/dev/null | head -n1 || true)
+        if [ -n "${ID:-}" ]; then
+          gh api --method PATCH "repos/$REPO/issues/comments/$ID" -F body=@"$BODY_FILE" >/dev/null \
+            && echo "Updated the ChangeLens comment." \
+            || echo "::warning::Could not update the comment (pull requests from forks have a read-only token). The report is in the job summary."
+        else
+          gh api --method POST "repos/$REPO/issues/$PR/comments" -F body=@"$BODY_FILE" >/dev/null \
+            && echo "Posted the ChangeLens comment." \
+            || echo "::warning::Could not post the comment (pull requests from forks have a read-only token). The report is in the job summary."
+        fi

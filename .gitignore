@@ -18,3 +18,6 @@ target/
 
 # Secrets - NEVER commit API keys
 .env
+
+# personal study material, not for the public repo
+docs/interview/

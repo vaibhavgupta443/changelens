@@ -76,7 +76,7 @@ public final class CodeModel {
             BehaviorFacts facts) {
     }
 
-    public record FieldModel(String name, String type, Set<String> modifiers, List<String> annotations, int line) {
+    public record FieldModel(String name, String type, Set<String> modifiers, List<String> annotations, int line, String initializer) {
     }
 
     public record TypeModel(
@@ -108,6 +108,7 @@ public final class CodeModel {
             String ref,
             Map<String, TypeModel> types,
             List<ResourceFile> resources,
-            List<String> parseWarnings) {
+            List<String> parseWarnings,
+            List<String> failedFiles) {
     }
 }

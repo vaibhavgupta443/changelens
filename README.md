@@ -127,7 +127,7 @@ More in [docs/PRODUCT.md](docs/PRODUCT.md).
 - The "no test reaches this" check is also static; it recognises direct calls and tests that call an endpoint by URL.
 - The risk and ordering ideas are heuristics, not trained models.
 
-Tested with unit tests (`./mvnw test`) and checked against real commits from spring-petclinic. A labelled evaluation set with measured precision and recall is planned.
+Measured on a labelled set of 52 before/after cases covering formatting, renames, moves, signature and logic changes: all 52 classified correctly after fixing four real bugs that a harder second set exposed (see [docs/EVALUATION.md](docs/EVALUATION.md), including what that does not prove). Also checked against real commits from spring-petclinic. Run it with `./mvnw test`.
 
 ## Build from source
 

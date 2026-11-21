@@ -97,6 +97,7 @@ public final class JavaSnapshotBuilder {
     private final Map<String, Parsed> parsedByPath = new LinkedHashMap<>();
     private final TypeIndex index = new TypeIndex();
     private final List<String> warnings = new ArrayList<>();
+    private final List<String> failedFiles = new ArrayList<>();
 
     public static Snapshot build(String repo, String ref, List<SourceFile> javaFiles, List<ResourceFile> resources) {
         return new JavaSnapshotBuilder().run(repo, ref, javaFiles, resources);
@@ -111,10 +112,12 @@ public final class JavaSnapshotBuilder {
             ParseResult<CompilationUnit> r = parser.parse(f.content());
             if (r.getResult().isEmpty()) {
                 warnings.add("could not parse " + f.path() + ": " + firstProblem(r));
+                failedFiles.add(f.path());
                 continue;
             }
             if (!r.isSuccessful()) {
                 warnings.add("partial parse of " + f.path() + ": " + firstProblem(r));
+                failedFiles.add(f.path()); // incomplete tree: absence of a class here proves nothing
             }
             CompilationUnit cu = r.getResult().get();
             String pkg = cu.getPackageDeclaration().map(p -> p.getNameAsString()).orElse("");
@@ -149,7 +152,7 @@ public final class JavaSnapshotBuilder {
                 types.put(tm.fqn(), tm);
             }
         }
-        return new Snapshot(repo, ref, types, resources == null ? List.of() : List.copyOf(resources), List.copyOf(warnings));
+        return new Snapshot(repo, ref, types, resources == null ? List.of() : List.copyOf(resources), List.copyOf(warnings), List.copyOf(failedFiles));
     }
 
     private static String firstProblem(ParseResult<?> r) {
@@ -357,13 +360,16 @@ public final class JavaSnapshotBuilder {
         List<MethodModel> methods = new ArrayList<>();
         if (td instanceof RecordDeclaration r) {
             r.getParameters().forEach(pa -> fields.add(new FieldModel(pa.getNameAsString(), erase(pa.getType().asString()),
-                    Set.of("private", "final"), annotationTexts(pa.getAnnotations()), line(pa))));
+                    Set.of("private", "final"), annotationTexts(pa.getAnnotations()), line(pa), "")));
+        }
+        if (td instanceof EnumDeclaration en) {
+            en.getEntries().forEach(c -> fields.add(new FieldModel(c.getNameAsString(), "enum-constant", Set.of(), annotationTexts(c.getAnnotations()), line(c), c.getArguments().toString())));
         }
         for (BodyDeclaration<?> m : td.getMembers()) {
             if (m instanceof FieldDeclaration fd) {
                 for (VariableDeclarator v : fd.getVariables()) {
                     fields.add(new FieldModel(v.getNameAsString(), erase(v.getType().asString()), modifiers(fd.getModifiers()),
-                            annotationTexts(fd.getAnnotations()), line(fd)));
+                            annotationTexts(fd.getAnnotations()), line(fd), v.getInitializer().map(i -> normExpr(i)).orElse("")));
                 }
             } else if (m instanceof CallableDeclaration<?> cd) {
                 methods.add(buildMethod(p, td, fqn, cd));
@@ -419,6 +425,12 @@ public final class JavaSnapshotBuilder {
         return Optional.of(((ConstructorDeclaration) cd).getBody());
     }
 
+    private static String normExpr(Expression e) {
+        Expression c = e.clone();
+        c.getAllContainedComments().forEach(Comment::remove);
+        return WS.matcher(c.toString()).replaceAll(" ");
+    }
+
     private static void stripComments(Node n) {
         n.getAllContainedComments().forEach(Comment::remove);
         n.removeComment();
@@ -426,12 +438,18 @@ public final class JavaSnapshotBuilder {
 
     /** Rename every parameter and local variable to v0, v1, ... so that a pure rename is invisible to the hash. */
     private static void alphaRename(CallableDeclaration<?> cd) {
+        // method parameters are numbered p0, p1... and every other local (variables, lambda and catch parameters) v0, v1...
+        // separately, so adding a parameter does not shift the names inside an otherwise identical body
         Map<String, String> map = new LinkedHashMap<>();
+        int[] counter = {0, 0};
+        for (Parameter pa : cd.getParameters()) {
+            map.computeIfAbsent(pa.getNameAsString(), k -> "p" + counter[0]++);
+        }
         for (Parameter pa : cd.findAll(Parameter.class)) {
-            map.computeIfAbsent(pa.getNameAsString(), k -> "v" + map.size());
+            map.computeIfAbsent(pa.getNameAsString(), k -> "v" + counter[1]++);
         }
         for (VariableDeclarator vd : cd.findAll(VariableDeclarator.class)) {
-            map.computeIfAbsent(vd.getNameAsString(), k -> "v" + map.size());
+            map.computeIfAbsent(vd.getNameAsString(), k -> "v" + counter[1]++);
         }
         if (map.isEmpty()) {
             return;

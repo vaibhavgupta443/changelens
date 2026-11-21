@@ -62,6 +62,9 @@ public final class SnapshotDiffer {
         removed.removeAll(ht.keySet());
         Set<String> added = new LinkedHashSet<>(ht.keySet());
         added.removeAll(bt.keySet());
+        // a file the parser could not read on one side says nothing about its classes: never report them as added or removed
+        removed.removeIf(fqn -> head.failedFiles().contains(bt.get(fqn).filePath()));
+        added.removeIf(fqn -> base.failedFiles().contains(ht.get(fqn).filePath()));
 
         // 1) types that exist on both sides
         for (String fqn : ht.keySet()) {
@@ -92,7 +95,7 @@ public final class SnapshotDiffer {
                 w.methods.add(methodAdded(m));
             }
             for (FieldModel f : w.head.fields()) {
-                w.fields.add(new FieldChange(f.name(), ChangeKind.ADDED, null, f.type(), f.annotations(), List.of()));
+                w.fields.add(new FieldChange(f.name(), ChangeKind.ADDED, null, f.type(), f.annotations(), List.of(), false));
             }
             works.add(w);
         }
@@ -104,7 +107,7 @@ public final class SnapshotDiffer {
                 w.methods.add(methodRemoved(m));
             }
             for (FieldModel f : w.base.fields()) {
-                w.fields.add(new FieldChange(f.name(), ChangeKind.REMOVED, f.type(), null, List.of(), f.annotations()));
+                w.fields.add(new FieldChange(f.name(), ChangeKind.REMOVED, f.type(), null, List.of(), f.annotations(), false));
             }
             works.add(w);
         }
@@ -163,16 +166,17 @@ public final class SnapshotDiffer {
             FieldModel o = bf.get(e.getKey());
             FieldModel n = e.getValue();
             if (o == null) {
-                w.fields.add(new FieldChange(n.name(), ChangeKind.ADDED, null, n.type(), n.annotations(), List.of()));
-            } else if (!o.type().equals(n.type()) || !o.annotations().equals(n.annotations())) {
+                w.fields.add(new FieldChange(n.name(), ChangeKind.ADDED, null, n.type(), n.annotations(), List.of(), false));
+            } else if (!o.type().equals(n.type()) || !o.annotations().equals(n.annotations()) || !o.initializer().equals(n.initializer())) {
                 w.fields.add(new FieldChange(n.name(), ChangeKind.MODIFIED, o.type(), n.type(),
-                        diffLists(o.annotations(), n.annotations(), true), diffLists(n.annotations(), o.annotations(), true)));
+                        diffLists(o.annotations(), n.annotations(), true), diffLists(n.annotations(), o.annotations(), true),
+                        !o.initializer().equals(n.initializer())));
             }
         }
         for (var e : bf.entrySet()) {
             if (!hf.containsKey(e.getKey())) {
                 FieldModel o = e.getValue();
-                w.fields.add(new FieldChange(o.name(), ChangeKind.REMOVED, o.type(), null, List.of(), o.annotations()));
+                w.fields.add(new FieldChange(o.name(), ChangeKind.REMOVED, o.type(), null, List.of(), o.annotations(), false));
             }
         }
         // methods
@@ -306,7 +310,7 @@ public final class SnapshotDiffer {
                 minus(o.modifiers(), n.modifiers()),
                 diffLists(o.annotations(), n.annotations(), true),
                 diffLists(n.annotations(), o.annotations(), true),
-                o.returnType(), n.returnType());
+                o.returnType(), n.returnType(), o.paramTypes(), n.paramTypes());
     }
 
     private static List<String> minus(Collection<String> a, Collection<String> b) {
@@ -504,6 +508,38 @@ public final class SnapshotDiffer {
             MethodModel m = headModels.get(a.mc().id());
             if (m != null && meaningful(m)) {
                 addBy.computeIfAbsent(m.alphaHash(), k -> new ArrayList<>()).add(a);
+            }
+        }
+        // second chance for a method that moved and was edited too: same name and parameters in another class, similar behaviour
+        Map<String, List<Ref>> remByKey = new HashMap<>();
+        Map<String, List<Ref>> addByKey = new HashMap<>();
+        for (Ref r : removed) {
+            MethodModel m = baseModels.get(r.mc().id());
+            if (m != null && m.hasBody() && m.statementCount() >= 3) {
+                remByKey.computeIfAbsent(memberKey(m), k -> new ArrayList<>()).add(r);
+            }
+        }
+        for (Ref a : added) {
+            MethodModel m = headModels.get(a.mc().id());
+            if (m != null && m.hasBody() && m.statementCount() >= 3) {
+                addByKey.computeIfAbsent(memberKey(m), k -> new ArrayList<>()).add(a);
+            }
+        }
+        for (var e : remByKey.entrySet()) {
+            List<Ref> rl = e.getValue();
+            List<Ref> al = addByKey.getOrDefault(e.getKey(), List.of());
+            if (rl.size() == 1 && al.size() == 1 && rl.get(0).w() != al.get(0).w()
+                    && rl.get(0).w().methods.contains(rl.get(0).mc()) && al.get(0).w().methods.contains(al.get(0).mc())) {
+                MethodModel o = baseModels.get(rl.get(0).mc().id());
+                MethodModel n = headModels.get(al.get(0).mc().id());
+                if (!o.alphaHash().equals(n.alphaHash()) && similarity(o, n) >= 0.6) { // identical bodies are handled as exact moves below
+                    MethodChange moved = compare(o, n, ChangeKind.MOVED);
+                    if (moved != null) {
+                        rl.get(0).w().methods.remove(rl.get(0).mc());
+                        al.get(0).w().methods.remove(al.get(0).mc());
+                        al.get(0).w().methods.add(moved);
+                    }
+                }
             }
         }
         for (var e : remBy.entrySet()) {

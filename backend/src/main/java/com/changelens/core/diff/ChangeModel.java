@@ -54,10 +54,13 @@ public final class ChangeModel {
             List<String> annotationsAdded,
             List<String> annotationsRemoved,
             String oldReturnType,
-            String newReturnType) {
+            String newReturnType,
+            List<String> oldParamTypes,
+            List<String> newParamTypes) {
         public boolean isEmpty() {
             return modifiersAdded.isEmpty() && modifiersRemoved.isEmpty() && annotationsAdded.isEmpty()
-                    && annotationsRemoved.isEmpty() && java.util.Objects.equals(oldReturnType, newReturnType);
+                    && annotationsRemoved.isEmpty() && java.util.Objects.equals(oldReturnType, newReturnType)
+                    && java.util.Objects.equals(oldParamTypes, newParamTypes);
         }
     }
 
@@ -80,7 +83,7 @@ public final class ChangeModel {
     }
 
     public record FieldChange(String name, ChangeKind kind, String oldType, String newType, List<String> annotationsAdded,
-                              List<String> annotationsRemoved) {
+                              List<String> annotationsRemoved, boolean initializerChanged) {
     }
 
     public record TypeChange(

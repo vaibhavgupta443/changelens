@@ -99,17 +99,31 @@ public final class JavaSnapshotBuilder {
     private final List<String> warnings = new ArrayList<>();
     private final List<String> failedFiles = new ArrayList<>();
 
+    private final ParseCache cache;
+
+    private JavaSnapshotBuilder(ParseCache cache) {
+        this.cache = cache;
+    }
+
     public static Snapshot build(String repo, String ref, List<SourceFile> javaFiles, List<ResourceFile> resources) {
-        return new JavaSnapshotBuilder().run(repo, ref, javaFiles, resources);
+        return build(repo, ref, javaFiles, resources, new ParseCache());
+    }
+
+    /** Same as above, but files that are identical in another snapshot built with the same cache are parsed only once. */
+    public static Snapshot build(String repo, String ref, List<SourceFile> javaFiles, List<ResourceFile> resources, ParseCache cache) {
+        return new JavaSnapshotBuilder(cache).run(repo, ref, javaFiles, resources);
     }
 
     private Snapshot run(String repo, String ref, List<SourceFile> files, List<ResourceFile> resources) {
-        JavaParser parser = new JavaParser(config);
-        for (SourceFile f : files) {
-            if (!f.path().endsWith(".java")) {
-                continue;
-            }
-            ParseResult<CompilationUnit> r = parser.parse(f.content());
+        long tStart = System.nanoTime();
+        // Parsing is independent per file, so it runs in parallel (one JavaParser per thread: the parser is not thread-safe).
+        // The results are consumed in the original file order, so the output does not depend on thread timing.
+        ThreadLocal<JavaParser> parsers = ThreadLocal.withInitial(() -> new JavaParser(config));
+        List<SourceFile> javaOnly = files.stream().filter(f -> f.path().endsWith(".java")).toList();
+        List<ParseResult<CompilationUnit>> results = javaOnly.parallelStream().map(f -> cache.get(f.content(), text -> parsers.get().parse(text))).toList();
+        for (int i = 0; i < javaOnly.size(); i++) {
+            SourceFile f = javaOnly.get(i);
+            ParseResult<CompilationUnit> r = results.get(i);
             if (r.getResult().isEmpty()) {
                 warnings.add("could not parse " + f.path() + ": " + firstProblem(r));
                 failedFiles.add(f.path());
@@ -138,19 +152,33 @@ public final class JavaSnapshotBuilder {
             }
             parsedByPath.put(f.path(), new Parsed(f.path(), f.content(), cu, pkg, imports, wild, statics));
         }
+        long tPass1 = System.nanoTime();
         // pass 1: declare every type
         for (Parsed p : parsedByPath.values()) {
             for (TypeDeclaration<?> td : topAndNestedTypes(p.cu())) {
                 declare(p, td);
             }
         }
+        long tPass2 = System.nanoTime();
         // pass 2: build models with resolved behaviour
-        Map<String, TypeModel> types = new LinkedHashMap<>();
+        // The type index is read-only from here on and every method is normalised on a clone of its AST, so the types can be
+        // built in parallel. Results are put into the map in source order, so the output does not depend on thread timing.
+        record Work(Parsed p, TypeDeclaration<?> td) {
+        }
+        List<Work> work = new ArrayList<>();
         for (Parsed p : parsedByPath.values()) {
             for (TypeDeclaration<?> td : topAndNestedTypes(p.cu())) {
-                TypeModel tm = buildType(p, td);
-                types.put(tm.fqn(), tm);
+                work.add(new Work(p, td));
             }
+        }
+        List<TypeModel> built = work.parallelStream().map(w -> buildType(w.p(), w.td())).toList();
+        Map<String, TypeModel> types = new LinkedHashMap<>();
+        for (TypeModel tm : built) {
+            types.put(tm.fqn(), tm);
+        }
+        if (System.getProperty("changelens.timing") != null) {
+            System.err.printf("[changelens] build %s: %d files, parse+index %d ms, declare %d ms, models %d ms%n", ref, files.size(),
+                    (tPass1 - tStart) / 1_000_000, (tPass2 - tPass1) / 1_000_000, (System.nanoTime() - tPass2) / 1_000_000);
         }
         return new Snapshot(repo, ref, types, resources == null ? List.of() : List.copyOf(resources), List.copyOf(warnings), List.copyOf(failedFiles));
     }

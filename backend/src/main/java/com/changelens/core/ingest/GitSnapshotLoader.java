@@ -3,6 +3,7 @@ package com.changelens.core.ingest;
 import com.changelens.core.model.CodeModel.ResourceFile;
 import com.changelens.core.model.CodeModel.Snapshot;
 import com.changelens.core.parse.JavaSnapshotBuilder;
+import com.changelens.core.parse.ParseCache;
 import com.changelens.core.parse.SourceFile;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -35,6 +36,11 @@ public final class GitSnapshotLoader {
     }
 
     public static Snapshot load(Path repoDir, String revision, String repoName) throws IOException {
+        return load(repoDir, revision, repoName, new ParseCache());
+    }
+
+    /** Loads with a shared {@link ParseCache}, so files that did not change between two revisions are parsed once. */
+    public static Snapshot load(Path repoDir, String revision, String repoName, ParseCache cache) throws IOException {
         Path gitDir = repoDir.resolve(".git");
         FileRepositoryBuilder b = new FileRepositoryBuilder();
         b = java.nio.file.Files.isDirectory(gitDir) ? b.setGitDir(gitDir.toFile()) : b.setGitDir(repoDir.toFile()).setBare();
@@ -71,7 +77,7 @@ public final class GitSnapshotLoader {
                     }
                 }
             }
-            return JavaSnapshotBuilder.build(repoName, commit.getName().substring(0, 10), java, resources);
+            return JavaSnapshotBuilder.build(repoName, commit.getName().substring(0, 10), java, resources, cache);
         }
     }
 

@@ -35,10 +35,23 @@ public final class AnalyzeMain {
         Path repo = Path.of(opt.getOrDefault("repo", ".")).toAbsolutePath().normalize();
         String name = repo.getFileName() == null ? "repo" : repo.getFileName().toString();
         long t0 = System.nanoTime();
-        Snapshot base = GitSnapshotLoader.load(repo, opt.get("base"), name);
-        Snapshot head = GitSnapshotLoader.load(repo, opt.get("head"), name);
+        boolean verbose = opt.containsKey("verbose");
+        // base and head are independent, so they are read and parsed at the same time
+        // and they share one parse cache, so files that did not change are parsed once
+        com.changelens.core.parse.ParseCache cache = new com.changelens.core.parse.ParseCache();
+        java.util.concurrent.CompletableFuture<Snapshot> baseFuture = java.util.concurrent.CompletableFuture.supplyAsync(() -> load(repo, opt.get("base"), name, cache));
+        java.util.concurrent.CompletableFuture<Snapshot> headFuture = java.util.concurrent.CompletableFuture.supplyAsync(() -> load(repo, opt.get("head"), name, cache));
+        Snapshot base = baseFuture.join();
+        long t1 = System.nanoTime();
+        Snapshot head = headFuture.join();
+        long t2 = System.nanoTime();
         ChangeSet cs = SnapshotDiffer.diff(base, head);
+        long t3 = System.nanoTime();
         ImpactReport impact = ImpactAnalyzer.analyze(head, cs);
+        if (verbose) {
+            System.err.printf("[changelens] base %d ms, head %d ms, diff %d ms, impact %d ms (%d + %d types)%n", (t1 - t0) / 1_000_000,
+                    (t2 - t1) / 1_000_000, (t3 - t2) / 1_000_000, (System.nanoTime() - t3) / 1_000_000, base.types().size(), head.types().size());
+        }
         String format = opt.getOrDefault("format", "pr-comment");
         int max = Integer.parseInt(opt.getOrDefault("max-chars", "60000"));
         String out = format.equals("markdown") ? MarkdownReport.render(cs) : PrComment.render(cs, impact, max);
@@ -49,6 +62,14 @@ public final class AnalyzeMain {
         }
         System.err.printf("[changelens] %d types changed, %d flows touched, %d ms%n", cs.types().size(), impact.flows().size(),
                 (System.nanoTime() - t0) / 1_000_000);
+    }
+
+    private static Snapshot load(Path repo, String revision, String name, com.changelens.core.parse.ParseCache cache) {
+        try {
+            return GitSnapshotLoader.load(repo, revision, name, cache);
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
     }
 
     private static Map<String, String> parse(String[] args) {

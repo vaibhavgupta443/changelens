@@ -76,7 +76,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0   # ChangeLens reads the base and head commits from git history
-      - uses: vaibhavgupta443/changelens@v0.1.0
+      - uses: vaibhavgupta443/changelens@v0.1.1
 ```
 
 Open a pull request that changes Java code. ChangeLens posts one comment and keeps it updated on every push. The full report is also in the job summary.
@@ -84,7 +84,7 @@ Open a pull request that changes Java code. ChangeLens posts one comment and kee
 | Input | Default | Meaning |
 |---|---|---|
 | `comment` | `true` | Post and update a PR comment. `false` = job summary only. |
-| `version` | `latest` | Which ChangeLens release to use, for example `v0.1.0`. |
+| `version` | `latest` | Which ChangeLens release to use, for example `v0.1.1`. |
 | `max-chars` | `60000` | Comment length limit (GitHub allows 65,536). |
 
 **Safe by design.** ChangeLens only *parses* your code. It never builds or runs it, makes no network calls while analysing, and needs no secrets. Use the `pull_request` event (as above), not `pull_request_target`. For pull requests from forks GitHub gives a read-only token, so the comment is skipped and the report appears in the job summary instead.

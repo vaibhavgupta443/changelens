@@ -7,4 +7,9 @@ public interface TextEmbedder {
 
     /** One vector per text, in the same order. */
     List<float[]> embed(List<String> texts);
+
+    /** Names the model, so vectors from different models are never mixed in a cache. */
+    default String id() {
+        return "custom";
+    }
 }

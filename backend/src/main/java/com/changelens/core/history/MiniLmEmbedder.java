@@ -19,6 +19,11 @@ public final class MiniLmEmbedder implements TextEmbedder {
         return model.embedAll(segments).content().stream().map(Embedding::vector).toList();
     }
 
+    @Override
+    public String id() {
+        return "all-minilm-l6-v2-q";
+    }
+
     /**
      * @return the embedder, or null when the model is not on the classpath (the default build) or cannot start on this machine
      */

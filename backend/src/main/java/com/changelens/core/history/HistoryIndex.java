@@ -44,6 +44,13 @@ public final class HistoryIndex {
      */
     private static final double MIN_SCORE_FACTOR = Double.parseDouble(System.getProperty("changelens.minKeywordFactor", "1.2"));
     private static final int FLOOR_FROM_COMMITS = 100;
+    /**
+     * The words a commit shares with the question must also be rare enough, in total, to be evidence: the sum of their idf must reach
+     * this factor times ln(commits). One rare word ("logback") is enough; the everyday word "fix" on its own is not, however high a
+     * short message scores for it. Without this, a question about a null pointer returned "try fixing code block". Calibrated on the
+     * same labelled questions as the score floor (tools/history-eval).
+     */
+    private static final double MIN_EVIDENCE_FACTOR = Double.parseDouble(System.getProperty("changelens.minEvidenceFactor", "0.65"));
     private static final double K1 = 1.2;
     private static final double B = 0.75;
     private static final Pattern FIX_LIKE = Pattern.compile("\\b(fix(es|ed)?|bug(fix)?|hotfix|revert(s|ed)?|regression|npe|crash(es)?|nullpointer\\w*)\\b",
@@ -231,6 +238,7 @@ public final class HistoryIndex {
             return List.of();
         }
         double[] score = new double[entries.size()];
+        double[] evidence = new double[entries.size()];
         Map<Integer, Set<String>> matched = new HashMap<>();
         int n = entries.size();
         for (String term : terms) {
@@ -245,12 +253,14 @@ public final class HistoryIndex {
                 double tf = posting[i + 1];
                 double norm = tf * (K1 + 1) / (tf + K1 * (1 - B + B * docLength[doc] / averageLength));
                 score[doc] += idf * norm;
+                evidence[doc] += idf;
                 matched.computeIfAbsent(doc, k -> new LinkedHashSet<>()).add(term);
             }
         }
         double floor = n >= FLOOR_FROM_COMMITS ? MIN_SCORE_FACTOR * Math.log(n + 1) : 0;
         List<Integer> order = new ArrayList<>(matched.keySet());
-        order.removeIf(d -> score[d] < floor);
+        double needed = n >= FLOOR_FROM_COMMITS ? MIN_EVIDENCE_FACTOR * Math.log(n + 1) : 0;
+        order.removeIf(d -> score[d] < floor || evidence[d] < needed);
         order.sort(Comparator.<Integer>comparingDouble(d -> -score[d]).thenComparing(d -> d));
         return order.stream().limit(limit).map(d -> new Hit(entries.get(d), score[d], List.copyOf(matched.get(d)))).toList();
     }

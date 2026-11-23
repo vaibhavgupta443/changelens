@@ -102,6 +102,19 @@ class SemanticHistorySearchTest {
     }
 
     @Test
+    void aKeywordHitOutranksAMeaningOnlyHitAtTheSameRankInsteadOfTyingWithIt() {
+        SemanticHistorySearch search = new SemanticHistorySearch(index, new GroupEmbedder());
+
+        // "logback" is found by keywords (first in that list); "picture" shares no word with any commit and is found only by meaning
+        // (first in that list): equal rank and equal vote would be a tie settled by the commit hash. The words must win,
+        // deterministically, and the meaning hit must still be there.
+        List<Hit> hits = search.search("logback picture", 4, Mode.HYBRID);
+
+        assertThat(hits).extracting(h -> h.entry().sha()).startsWith(shaLogback).contains(shaImages);
+        assertThat(hits.get(0).score()).isGreaterThan(hits.get(1).score()); // strictly greater: no tie
+    }
+
+    @Test
     void keywordModeIsExactlyTheKeywordIndex() {
         SemanticHistorySearch search = new SemanticHistorySearch(index, new GroupEmbedder());
 
@@ -119,6 +132,61 @@ class SemanticHistorySearchTest {
         search.search("download", 2, Mode.HYBRID);
 
         assertThat(embedder.texts.get()).isEqualTo(index.size() + 3); // each commit once, plus one text per question
+    }
+
+    @TempDir
+    Path cacheRoot;
+
+    @Test
+    void aCacheMeansEachCommitIsEmbeddedOnceAcrossSessions() {
+        EmbeddingCache cache = EmbeddingCache.forRepository(cacheRoot, "group", dir);
+        GroupEmbedder first = new GroupEmbedder();
+        SemanticHistorySearch session1 = new SemanticHistorySearch(index, first, cache);
+
+        List<Hit> before = session1.search("draw pictures", 3, Mode.SEMANTIC);
+
+        assertThat(first.texts.get()).isEqualTo(index.size() + 1); // every commit, plus the question
+        assertThat(session1.vectorsComputed()).isEqualTo(index.size());
+        assertThat(session1.vectorsFromCache()).isZero();
+
+        GroupEmbedder second = new GroupEmbedder(); // a new session: nothing in memory, but the cache file exists
+        SemanticHistorySearch session2 = new SemanticHistorySearch(index, second, cache);
+        List<Hit> after = session2.search("draw pictures", 3, Mode.SEMANTIC);
+
+        assertThat(second.texts.get()).isEqualTo(1); // only the question
+        assertThat(session2.vectorsFromCache()).isEqualTo(index.size());
+        assertThat(session2.vectorsComputed()).isZero();
+        assertThat(after).extracting(h -> h.entry().sha()).isEqualTo(before.stream().map(h -> h.entry().sha()).toList());
+        assertThat(after).extracting(Hit::score).isEqualTo(before.stream().map(Hit::score).toList());
+    }
+
+    @Test
+    void aNewCommitIsTheOnlyOneEmbeddedNextTime() throws Exception {
+        EmbeddingCache cache = EmbeddingCache.forRepository(cacheRoot, "group", dir);
+        HistoryIndex older = HistoryIndex.build(dir, shaPull, 100); // history before the last commit (the null fix)
+        new SemanticHistorySearch(older, new GroupEmbedder(), cache).search("image", 1, Mode.SEMANTIC);
+
+        GroupEmbedder later = new GroupEmbedder();
+        SemanticHistorySearch now = new SemanticHistorySearch(index, later, cache);
+        now.search("image", 1, Mode.SEMANTIC);
+
+        assertThat(older.size()).isEqualTo(index.size() - 1);
+        assertThat(now.vectorsFromCache()).isEqualTo(older.size());
+        assertThat(now.vectorsComputed()).isEqualTo(1);
+        assertThat(later.texts.get()).isEqualTo(2); // the new commit and the question
+    }
+
+    @Test
+    void aBrokenCacheFileOnlyCostsTheTimeToEmbedAgain() throws Exception {
+        EmbeddingCache cache = EmbeddingCache.forRepository(cacheRoot, "group", dir);
+        new SemanticHistorySearch(index, new GroupEmbedder(), cache).search("image", 1, Mode.SEMANTIC);
+        Files.write(cache.file(), new byte[] { 9, 9, 9 });
+
+        GroupEmbedder again = new GroupEmbedder();
+        SemanticHistorySearch search = new SemanticHistorySearch(index, again, cache);
+
+        assertThat(search.search("image", 1, Mode.SEMANTIC).get(0).entry().sha()).isEqualTo(shaImages);
+        assertThat(search.vectorsComputed()).isEqualTo(index.size());
     }
 
     @Test

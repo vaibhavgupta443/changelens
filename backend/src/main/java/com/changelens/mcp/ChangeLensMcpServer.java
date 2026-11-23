@@ -1,6 +1,7 @@
 package com.changelens.mcp;
 
 import com.changelens.core.Analyzer;
+import com.changelens.core.history.EmbeddingCache;
 import com.changelens.core.history.HistoryIndex;
 import com.changelens.core.history.HistoryIndex.Hit;
 import com.changelens.core.history.MiniLmEmbedder;
@@ -73,6 +74,7 @@ public final class ChangeLensMcpServer {
     }
 
     private final Supplier<TextEmbedder> embedderSupplier;
+    private final java.nio.file.Path cacheRoot;
     private TextEmbedder embedder;
     private boolean embedderLoaded;
     private final Map<String, SemanticHistorySearch> searches = new LinkedHashMap<>(8, 0.75f, true) {
@@ -83,13 +85,35 @@ public final class ChangeLensMcpServer {
     };
 
     public ChangeLensMcpServer(java.nio.file.Path workspaceRoot) {
-        this(workspaceRoot, MiniLmEmbedder::tryCreate);
+        this(workspaceRoot, MiniLmEmbedder::tryCreate, defaultCacheRoot());
     }
 
-    /** @param embedderSupplier loads the embedding model the first time meaning is needed; may return null when it is not available */
+    /** Without a cache folder: nothing is written to disk. Used by tests. */
     public ChangeLensMcpServer(java.nio.file.Path workspaceRoot, Supplier<TextEmbedder> embedderSupplier) {
+        this(workspaceRoot, embedderSupplier, null);
+    }
+
+    /**
+     * @param embedderSupplier loads the embedding model the first time meaning is needed; may return null when it is not available
+     * @param cacheRoot        where commit vectors are kept between sessions; null to keep nothing on disk
+     */
+    public ChangeLensMcpServer(java.nio.file.Path workspaceRoot, Supplier<TextEmbedder> embedderSupplier, java.nio.file.Path cacheRoot) {
         this.workspace = new Workspace(workspaceRoot);
         this.embedderSupplier = embedderSupplier;
+        this.cacheRoot = cacheRoot;
+    }
+
+    /** CHANGELENS_CACHE (the value "off" turns the cache off), else a folder in the home directory. Never inside a repository. */
+    private static java.nio.file.Path defaultCacheRoot() {
+        String configured = System.getenv("CHANGELENS_CACHE");
+        if (configured != null && configured.equalsIgnoreCase("off")) {
+            return null;
+        }
+        if (configured != null && !configured.isBlank()) {
+            return java.nio.file.Path.of(configured);
+        }
+        String home = System.getProperty("user.home");
+        return home == null ? null : java.nio.file.Path.of(home, ".changelens", "cache");
     }
 
     /** The embedding model, loaded once on first use; null when this build does not include it. */
@@ -101,8 +125,13 @@ public final class ChangeLensMcpServer {
         return embedder;
     }
 
-    private synchronized SemanticHistorySearch searchOf(String key, HistoryIndex index) {
-        return searches.computeIfAbsent(key, k -> new SemanticHistorySearch(index, embedder()));
+    private synchronized SemanticHistorySearch searchOf(String repo, String key, HistoryIndex index) {
+        return searches.computeIfAbsent(key, k -> {
+            TextEmbedder model = embedder();
+            EmbeddingCache cache = cacheRoot == null ? null
+                    : EmbeddingCache.forRepository(cacheRoot, model.id() + "-t1", workspace.resolve(repo));
+            return new SemanticHistorySearch(index, model, cache);
+        });
     }
 
     /** Starts serving MCP over the given streams. The client owns the lifetime: the server ends when the input ends. */
@@ -330,7 +359,7 @@ public final class ChangeLensMcpServer {
                     + "(use changelens-mcp-semantic.jar). Searched by keywords only.";
         }
         List<Hit> found = used == Mode.KEYWORD ? index.search(query, limit)
-                : searchOf(str(args, "repo") + "@" + sha, index).search(query, limit, used);
+                : searchOf(str(args, "repo"), str(args, "repo") + "@" + sha, index).search(query, limit, used);
         List<Map<String, Object>> results = found.stream().map(h -> {
             Map<String, Object> one = new LinkedHashMap<>();
             one.put("commit", h.entry().sha());

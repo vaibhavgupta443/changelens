@@ -1,0 +1,189 @@
+{
+  "repo": "ollama4j",
+  "note": "Answers were read from the real git log of github.com/ollama4j/ollama4j and written down before searching. 'keywords' questions reuse words from the commit; 'paraphrase' questions deliberately avoid them. Authored by one person, 22 questions: a sanity check, not a benchmark. The 5 unrelated questions have nothing to find: a correct search returns no commits for them.",
+  "questions": [
+    {
+      "kind": "keywords",
+      "q": "When was ModelPullListener added for progress during model pull?",
+      "answers": [
+        "477d152"
+      ]
+    },
+    {
+      "kind": "keywords",
+      "q": "expose model_info in ModelDetail",
+      "answers": [
+        "981b099",
+        "24f715b"
+      ]
+    },
+    {
+      "kind": "keywords",
+      "q": "Imagen example image generation OllamaGenerateImageRequest",
+      "answers": [
+        "2f0cd8b",
+        "9901acb"
+      ]
+    },
+    {
+      "kind": "keywords",
+      "q": "Add MCP tool integration",
+      "answers": [
+        "99962ef"
+      ]
+    },
+    {
+      "kind": "keywords",
+      "q": "OllamaGenerateRequest withFormat Map",
+      "answers": [
+        "3d7b79b"
+      ]
+    },
+    {
+      "kind": "keywords",
+      "q": "capabilities field in ModelDetail and suffix in GenerateRequest",
+      "answers": [
+        "05ae64f"
+      ]
+    },
+    {
+      "kind": "keywords",
+      "q": "rename the setAuth test method",
+      "answers": [
+        "72e6808"
+      ]
+    },
+    {
+      "kind": "keywords",
+      "q": "unit tests for core components, models and utilities",
+      "answers": [
+        "74e2de2"
+      ]
+    },
+    {
+      "kind": "keywords",
+      "q": "Using with llmman docs section",
+      "answers": [
+        "ffe2b8b"
+      ]
+    },
+    {
+      "kind": "keywords",
+      "q": "upgrade jackson-databind to 2.21.0",
+      "answers": [
+        "137eba3"
+      ]
+    },
+    {
+      "kind": "keywords",
+      "q": "bump testcontainers ollama",
+      "answers": [
+        "079c751"
+      ]
+    },
+    {
+      "kind": "keywords",
+      "q": "bump spotless maven plugin",
+      "answers": [
+        "fd6647b"
+      ]
+    },
+    {
+      "kind": "keywords",
+      "q": "mcp sdk dependency bumped to 0.17.2",
+      "answers": [
+        "378498a"
+      ]
+    },
+    {
+      "kind": "keywords",
+      "q": "comment out video and image gallery carousel components",
+      "answers": [
+        "62aa2e7"
+      ]
+    },
+    {
+      "kind": "keywords",
+      "q": "TypewriterTextarea rendering",
+      "answers": [
+        "4bdc132"
+      ]
+    },
+    {
+      "kind": "paraphrase",
+      "q": "how did the library gain the ability to draw pictures from a text prompt",
+      "answers": [
+        "2f0cd8b"
+      ]
+    },
+    {
+      "kind": "paraphrase",
+      "q": "showing download status while fetching a model",
+      "answers": [
+        "477d152"
+      ]
+    },
+    {
+      "kind": "paraphrase",
+      "q": "let callers constrain the shape of the answer returned by generate",
+      "answers": [
+        "3d7b79b"
+      ]
+    },
+    {
+      "kind": "paraphrase",
+      "q": "exposing extra metadata about a model",
+      "answers": [
+        "981b099",
+        "24f715b"
+      ]
+    },
+    {
+      "kind": "paraphrase",
+      "q": "letting the model call external tools via the model context protocol",
+      "answers": [
+        "99962ef"
+      ]
+    },
+    {
+      "kind": "paraphrase",
+      "q": "make the authentication tests stop expecting failures",
+      "answers": [
+        "6164a41"
+      ]
+    },
+    {
+      "kind": "paraphrase",
+      "q": "move the website to a newer documentation framework version",
+      "answers": [
+        "270560a",
+        "9c2c899"
+      ]
+    },
+    {
+      "kind": "unrelated",
+      "q": "recipe for chocolate cake",
+      "answers": []
+    },
+    {
+      "kind": "unrelated",
+      "q": "kubernetes helm chart deployment",
+      "answers": []
+    },
+    {
+      "kind": "unrelated",
+      "q": "football world cup results",
+      "answers": []
+    },
+    {
+      "kind": "unrelated",
+      "q": "tax filing deadline for freelancers",
+      "answers": []
+    },
+    {
+      "kind": "unrelated",
+      "q": "how to tune guitar strings",
+      "answers": []
+    }
+  ]
+}

@@ -2,6 +2,8 @@ package com.changelens.mcp;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.changelens.core.history.MiniLmEmbedder;
+import com.changelens.core.history.TextEmbedder;
 import io.modelcontextprotocol.server.McpSyncServer;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -17,6 +19,7 @@ import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.junit.jupiter.api.AfterEach;
@@ -43,12 +46,17 @@ class ChangeLensMcpServerTest {
     @BeforeEach
     void start() throws Exception {
         workspace = createWorkspaceWithRepo();
+        connect(MiniLmEmbedder::tryCreate);
+    }
+
+    /** Starts a server on fresh pipes and completes the MCP handshake. Called again, it replaces the running server. */
+    private void connect(Supplier<TextEmbedder> embedder) throws Exception {
         PipedOutputStream clientToServer = new PipedOutputStream();
         PipedInputStream serverIn = new PipedInputStream(clientToServer, 1 << 16);
         PipedOutputStream serverOut = new PipedOutputStream();
         PipedInputStream clientFromServer = new PipedInputStream(serverOut, 1 << 16);
         toServer = new PrintWriter(clientToServer, true, StandardCharsets.UTF_8);
-        server = new ChangeLensMcpServer(workspace).start(serverIn, serverOut);
+        server = new ChangeLensMcpServer(workspace, embedder).start(serverIn, serverOut);
 
         Thread reader = new Thread(() -> {
             try (BufferedReader r = new BufferedReader(new InputStreamReader(clientFromServer, StandardCharsets.UTF_8))) {
@@ -75,13 +83,13 @@ class ChangeLensMcpServerTest {
     }
 
     @Test
-    void announcesItselfAndItsEightReadOnlyTools() {
+    void announcesItselfAndItsTenReadOnlyTools() {
         JsonNode tools = request("tools/list", "{}").path("result").path("tools");
 
         List<String> names = new ArrayList<>();
         tools.forEach(t -> names.add(t.path("name").asString()));
         assertThat(names).containsExactlyInAnyOrder("list_repositories", "analyze_change", "get_overview", "list_changes",
-                "affected_endpoints", "untested_changes", "blast_radius", "verify_claims");
+                "affected_endpoints", "untested_changes", "blast_radius", "search_history", "change_history", "verify_claims");
         tools.forEach(t -> assertThat(t.path("annotations").path("readOnlyHint").asBoolean()).as(t.path("name").asString()).isTrue());
     }
 
@@ -124,6 +132,99 @@ class ChangeLensMcpServerTest {
         assertThat(results.get(1).path("methodKnown").asBoolean()).isTrue();
         assertThat(results.get(1).path("factTrue").asBoolean()).isFalse();
         assertThat(results.get(2).path("methodKnown").asBoolean()).isFalse();
+    }
+
+    @Test
+    void searchingTheHistoryReturnsRealCommitsAndSaysHowFarBackItLooked() {
+        JsonNode answer = call("search_history", "{\"repo\":\"demo\",\"query\":\"what happens when the name is null\"}");
+
+        JsonNode best = answer.path("results").get(0);
+        assertThat(best.path("subject").asString()).isEqualTo("Greet a stranger when the name is null");
+        assertThat(best.path("commit").asString()).hasSize(40);
+        assertThat(best.path("files").get(0).asString()).endsWith("Greeter.java");
+        assertThat(answer.path("history").path("commitsIndexed").asInt()).isEqualTo(3);
+        assertThat(answer.path("history").path("window").asString()).contains("newest");
+        assertThat(call("search_history", "{\"repo\":\"demo\",\"query\":\"null\",\"limit\":1}").path("results").size()).isEqualTo(1);
+        assertThat(call("search_history", "{\"repo\":\"demo\",\"query\":\"kubernetes helm\"}").path("results").size()).isZero();
+    }
+
+    @Test
+    void hybridSearchUsesTheModelWhenItIsAvailable() {
+        // measured: the model scores this question 0.53 against the right commit and about 0 against the others
+        String question = "greeting for an anonymous visitor";
+
+        JsonNode answer = call("search_history", "{\"repo\":\"demo\",\"query\":\"" + question + "\"}");
+
+        assertThat(answer.path("mode").asString()).isEqualTo("hybrid");
+        assertThat(answer.path("results").get(0).path("subject").asString()).isEqualTo("Greet a stranger when the name is null");
+        JsonNode byMeaning = call("search_history", "{\"repo\":\"demo\",\"query\":\"" + question + "\",\"mode\":\"semantic\"}");
+        assertThat(byMeaning.path("mode").asString()).isEqualTo("semantic");
+        assertThat(byMeaning.path("results").get(0).path("subject").asString()).isEqualTo("Greet a stranger when the name is null");
+        assertThat(call("search_history", "{\"repo\":\"demo\",\"query\":\"kubernetes helm chart\"}").path("results").size()).isZero();
+    }
+
+    @Test
+    void withoutTheModelMeaningSearchFallsBackToKeywordsAndSaysSo() throws Exception {
+        stop();
+        connect(() -> null);
+
+        JsonNode answer = call("search_history", "{\"repo\":\"demo\",\"query\":\"null stranger\",\"mode\":\"semantic\"}");
+
+        assertThat(answer.path("mode").asString()).isEqualTo("keyword");
+        assertThat(answer.path("note").asString()).contains("changelens-mcp-semantic.jar");
+        assertThat(answer.path("results").get(0).path("subject").asString()).isEqualTo("Greet a stranger when the name is null");
+    }
+
+    @Test
+    void anUnknownSearchModeIsRejected() {
+        assertThat(callError("search_history", "{\"repo\":\"demo\",\"query\":\"x\",\"mode\":\"magic\"}")).contains("keyword, semantic or hybrid");
+    }
+
+    @Test
+    void historyCanBeReadAsOfAnEarlierRevision() {
+        JsonNode answer = call("search_history", "{\"repo\":\"demo\",\"query\":\"null stranger\",\"revision\":\"HEAD~1\"}");
+
+        assertThat(answer.path("history").path("commitsIndexed").asInt()).isEqualTo(2);
+        assertThat(answer.path("results").size()).isZero();
+    }
+
+    @Test
+    void changeHistoryShowsHowOftenTheTouchedFileChangedBeforeAndHowManyLookedLikeFixes() {
+        String id = call("analyze_change", "{\"repo\":\"demo\",\"base\":\"HEAD~1\",\"head\":\"HEAD\"}").path("analysisId").asString();
+
+        JsonNode answer = call("change_history", "{\"analysisId\":\"" + id + "\"}");
+
+        JsonNode file = answer.path("files").get(0);
+        assertThat(file.path("file").asString()).endsWith("Greeter.java");
+        assertThat(file.path("earlierCommitsTouchingFile").asInt()).isEqualTo(2); // the change itself is not counted
+        assertThat(file.path("earlierCommitsLookingLikeFixes").asInt()).isEqualTo(1);
+        assertThat(file.path("mostRecent").get(0).path("subject").asString()).isEqualTo("Fix missing comma in the greeting");
+        assertThat(file.path("mostRecent").get(0).path("looksLikeFix").asBoolean()).isTrue();
+        assertThat(answer.path("note").asString()).contains("hint");
+    }
+
+    @Test
+    void verifyClaimsAlsoProvesThatACitedCommitExists() {
+        String id = call("analyze_change", "{\"repo\":\"demo\",\"base\":\"HEAD~1\",\"head\":\"HEAD\"}").path("analysisId").asString();
+        String sha = call("search_history", "{\"repo\":\"demo\",\"query\":\"null stranger\"}").path("results").get(0).path("commit").asString();
+
+        JsonNode results = call("verify_claims", JSON.writeValueAsString(java.util.Map.of("analysisId", id, "claims", List.of(
+                java.util.Map.of("commit", sha),
+                java.util.Map.of("commit", sha.substring(0, 10)),
+                java.util.Map.of("commit", "0123456789abcdef0123456789abcdef01234567"))))).path("results");
+
+        assertThat(results.get(0).path("commitKnown").asBoolean()).isTrue(); // the commit that IS the change counts
+        assertThat(results.get(1).path("commitKnown").asBoolean()).isTrue();
+        assertThat(results.get(2).path("commitKnown").asBoolean()).isFalse();
+    }
+
+    @Test
+    void historyToolsRefuseBadInput() {
+        assertThat(callError("search_history", "{\"repo\":\"demo\",\"query\":\"  \"}")).contains("question");
+        assertThat(callError("search_history", "{\"repo\":\"demo\",\"query\":\"x\",\"revision\":\"--all\"}")).contains("not a valid git revision");
+        assertThat(callError("search_history", "{\"repo\":\"demo\",\"query\":\"x\",\"revision\":\"no-such-branch\"}")).contains("Could not read");
+        assertThat(callError("search_history", "{\"repo\":\"../x\",\"query\":\"x\"}")).contains("folder name");
+        assertThat(callError("change_history", "{\"analysisId\":\"a999\"}")).contains("Unknown analysisId");
     }
 
     @Test
@@ -204,10 +305,13 @@ class ChangeLensMcpServerTest {
             Files.createDirectories(file.getParent());
             Files.writeString(file, "package demo;\npublic class Greeter {\n    public String greet(String name) {\n        return \"hello \" + name;\n    }\n}\n");
             git.add().addFilepattern(".").call();
-            git.commit().setMessage("first").setAuthor(who).setCommitter(who).call();
-            Files.writeString(file, "package demo;\npublic class Greeter {\n    public String greet(String name) {\n        if (name == null) {\n            return \"hello stranger\";\n        }\n        return \"hello \" + name;\n    }\n}\n");
+            git.commit().setMessage("Add Greeter class").setAuthor(who).setCommitter(who).call();
+            Files.writeString(file, "package demo;\npublic class Greeter {\n    public String greet(String name) {\n        return \"hello, \" + name;\n    }\n}\n");
             git.add().addFilepattern(".").call();
-            git.commit().setMessage("second").setAuthor(who).setCommitter(who).call();
+            git.commit().setMessage("Fix missing comma in the greeting").setAuthor(who).setCommitter(who).call();
+            Files.writeString(file, "package demo;\npublic class Greeter {\n    public String greet(String name) {\n        if (name == null) {\n            return \"hello stranger\";\n        }\n        return \"hello, \" + name;\n    }\n}\n");
+            git.add().addFilepattern(".").call();
+            git.commit().setMessage("Greet a stranger when the name is null").setAuthor(who).setCommitter(who).call();
         }
         return workspace;
     }

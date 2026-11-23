@@ -1,0 +1,90 @@
+{
+ "repo": "SootUp",
+ "base": "HEAD~25",
+ "head": "HEAD",
+ "jar": "changelens-mcp-semantic.jar",
+ "recordedAt": "2026-11-23",
+ "steps": [
+  {
+   "kind": "call",
+   "text": "analyze_change  repo=SootUp  base=HEAD~25  head=HEAD",
+   "ms": 23166
+  },
+  {
+   "kind": "result",
+   "text": "162 files changed, 168 methods with new or changed logic"
+  },
+  {
+   "kind": "result",
+   "text": "40 changed methods that no test reaches, 51% of calls resolved"
+  },
+  {
+   "kind": "call",
+   "text": "list_changes  analysisId=a1  nature=BEHAVIOR",
+   "ms": 290
+  },
+  {
+   "kind": "result",
+   "text": "168 methods, most important first:"
+  },
+  {
+   "kind": "result",
+   "text": "  ArtificialMethod#addInvoke(Local,String,Immediate[…"
+  },
+  {
+   "kind": "fact",
+   "text": "    removes ternary on `clazz.isInterface()` · now calls ArtificialMethod.instanceInvoke"
+  },
+  {
+   "kind": "result",
+   "text": "  ArtificialMethod#getInvoke(Local,String,Immediate[…"
+  },
+  {
+   "kind": "fact",
+   "text": "    removes ternary on `clazz.isInterface()` · now calls ArtificialMethod.instanceInvoke"
+  },
+  {
+   "kind": "call",
+   "text": "change_history  analysisId=a1",
+   "ms": 4022
+  },
+  {
+   "kind": "result",
+   "text": "history read as of the base commit (2000 commits back to 2024-04-11):"
+  },
+  {
+   "kind": "result",
+   "text": "  AbstractCallGraphAlgorithm.java: 116 earlier commits touched it, 16 look like fixes"
+  },
+  {
+   "kind": "result",
+   "text": "  ViewTypeHierarchy.java: 50 earlier commits touched it, 8 look like fixes"
+  },
+  {
+   "kind": "result",
+   "text": "  StaticSingleAssignmentFormer.java: 22 earlier commits touched it, 7 look like fixes"
+  },
+  {
+   "kind": "call",
+   "text": "search_history  query=\"fix for null pointer in the jimple frontend\"",
+   "ms": 6020
+  },
+  {
+   "kind": "result",
+   "text": "  cb0d3c85  sootup.jimple.frontend: fix a compiler warning wrt. to generics"
+  },
+  {
+   "kind": "result",
+   "text": "  aee800dc  Fix: avoid NullPointerException for new-array expressions with a primitive ba…"
+  },
+  {
+   "kind": "call",
+   "text": "verify_claims  commits=[cb0d3c85, 01234567]",
+   "ms": 5
+  },
+  {
+   "kind": "result",
+   "text": "  cb0d3c85 -> real    01234567 -> NOT FOUND"
+  }
+ ]
+}

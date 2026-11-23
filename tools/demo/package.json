@@ -1,0 +1,14 @@
+{
+  "name": "changelens-demo-tools",
+  "private": true,
+  "description": "Records a real MCP session (capture.js) and renders it as a GIF (render.js).",
+  "scripts": {
+    "capture": "node capture.js ../../backend/target/changelens-mcp-semantic.jar <workspace> <repo> HEAD~25 HEAD ../../docs/demo/session.json",
+    "render": "node render.js ../../docs/demo/session.json ../../docs/demo/demo.gif ../../docs/demo/demo.png"
+  },
+  "dependencies": {
+    "gifenc": "^1.0.3",
+    "pngjs": "^7.0.0",
+    "puppeteer": "^24.0.0"
+  }
+}

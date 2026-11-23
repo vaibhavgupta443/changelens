@@ -4,7 +4,7 @@
 
 ChangeLens reads the code of a Java pull request with a real parser and tells the reviewer, at every level: which packages, classes and methods changed, what the new behaviour is (new branches, new calls, new exceptions), which **existing endpoints** run through the changed code, and what is only a move, a rename or a reformat. It posts that as one comment on the PR, with a diagram.
 
-It does not guess and it does not need an AI model: every statement comes from analysing the code.
+It does not guess and the analysis never uses an AI model: every statement comes from analysing the code. AI assistants can use that analysis through [MCP](#use-it-from-an-ai-assistant-mcp), and it stays checkable when they do.
 
 ## Why
 
@@ -122,6 +122,61 @@ curl "localhost:8080/api/analyses?size=20"                  # recent analyses, n
 - Results are stored with JPA in a local H2 file by default. Set `CHANGELENS_DB_URL` (and the usual `spring.datasource.*` settings) to use PostgreSQL.
 - Errors are RFC 7807 problem documents.
 
+## Use it from an AI assistant (MCP)
+
+ChangeLens is also a [Model Context Protocol](https://modelcontextprotocol.io) server. An assistant such as Claude Desktop, Claude Code or Cursor can ask it what a change does and get answers computed from the code, not guessed, with ids it can cite and ids you can check.
+
+![A recorded session: analyse a change, list what changed, read the history of the touched files, search the history, verify a cited commit](docs/demo/demo.gif)
+
+*Recorded against the real server on [SootUp](https://github.com/soot-oss/SootUp) (9,600 commits). A scripted client stands in for the assistant, so the recording shows the tools and no model. Waits are shortened; the timings on screen are real.*
+
+```bash
+cd backend
+./mvnw -P mcp -DskipTests package            # target/changelens-mcp.jar           about 11 MB, keyword search
+./mvnw -P mcp-semantic -DskipTests package   # target/changelens-mcp-semantic.jar  about 126 MB, adds search by meaning
+```
+
+Point your client at the jar and at the folder that holds your repositories:
+
+```json
+{ "mcpServers": { "changelens": { "command": "java",
+  "args": ["-jar", "/path/to/changelens-mcp-semantic.jar", "/path/to/folder-with-your-repos"] } } }
+```
+
+In Claude Code: `claude mcp add changelens -- java -jar /path/to/changelens-mcp-semantic.jar /path/to/folder-with-your-repos`
+
+| Tool | What it answers |
+|---|---|
+| `list_repositories` | Which repositories (folder names) the server may read |
+| `analyze_change` | Compare two revisions; returns an `analysisId` and the overview |
+| `get_overview` | Counts: new or changed logic, endpoints affected, changed methods no test reaches, share of calls resolved |
+| `list_changes` | Changed methods, most important first, each with the complete list of facts found (new branches, calls, exceptions, field writes, annotations) |
+| `affected_endpoints` | HTTP endpoints, listeners and jobs whose call path reaches the change, with the path |
+| `untested_changes` | Changed methods no test reaches |
+| `blast_radius` | For one changed method: the unchanged code that calls it and the tests that cover it |
+| `search_history` | Real commits (sha, date, subject, files) that answer a question about the repository's history |
+| `change_history` | For the files a change touches: how many earlier commits touched each, and how many of those messages look like fixes or reverts |
+| `verify_claims` | Check a statement before making it: is this method in the analysis, did the engine produce this fact for it, does this commit exist |
+
+**Why the answers can be trusted.** Nothing a tool returns is generated. Every method has an id, and `verify_claims` rejects an id, a fact or a commit the engine did not produce, so an assistant can check what it is about to say. The tools never change your repositories: they open git repositories inside one workspace folder, take a folder name and never a path, refuse revisions that could be read as git options, and never build or run your code. The only thing written anywhere is the optional vector cache described under Limits, in your home folder.
+
+**Searching the history.** `search_history` ranks commits by their words (BM25, with `ModelPullListener` split into "model pull listener") and, in the semantic build, also by meaning with a small embedding model that runs on your CPU (all-MiniLM-L6-v2: no API key, no cost, nothing leaves the machine). The model only reorders real commits; it never writes text. A relevance floor makes a question about nothing in the history return nothing. Authors are not indexed.
+
+Measured on 22 questions written from the real git log of ollama4j (details and caveats in [tools/history-eval](tools/history-eval/README.md)):
+
+| | questions that reuse the commit's words (15) | paraphrases (7) | unrelated (5) |
+|---|---|---|---|
+| keywords | right commit first for 14, MRR 0.96 | in the top 5 for 2 | 0 wrong |
+| keywords and meaning | first for 14, MRR 0.94 | in the top 5 for **4** | 0 wrong |
+
+Meaning helps on paraphrases and does nothing for questions that already share words with the commit. It is a small, one-person set, so read it as a sanity check, not a benchmark.
+
+**Limits.**
+- Java and Spring only, and call tracing is static, as above.
+- History search reads the newest 2,000 non-merge commits and says how far back that reached. Questions with distinctive words work well; generic ones ("how are call graphs constructed") can still put a weak commit first.
+- The first meaning-based search of a repository embeds its commits once (6 to 28 s on a laptop CPU) and keeps the vectors in `~/.changelens/cache` (`CHANGELENS_CACHE` moves it, `off` disables it; it holds commit ids and numbers, no message text). After that a question takes about 25 ms.
+- Analysing a large repository takes time: about 20 s for 25 commits of SootUp (2,400 Java files) on a laptop.
+
 ## What it tells you
 
 | Level | What you see |
@@ -164,6 +219,8 @@ cd backend
 ## Roadmap
 
 - Visual web UI (interactive package > class > method map) on top of the REST API
+- An assistant that answers questions about a change and may only say what `verify_claims` confirms
+- A check of a pull request description against what the change does: a model turns the text into claims, the engine decides which are true
 - Optional plain-English narration where every sentence cites a fact (the `ai-service/` folder holds early, experimental building blocks and is not used by the Action)
 - Multi-repository changes: match HTTP and message contracts across repos
 - CODEOWNERS routing, policy rules, audit log

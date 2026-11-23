@@ -25,7 +25,11 @@ Reviewing is mostly *understanding the change*. Microsoft's study of code review
 
 ## Example
 
-This is the real output for a real commit in [spring-petclinic](https://github.com/spring-projects/spring-petclinic) ("Enforce unique pet names per owner"):
+On GitHub, ChangeLens reviewing [its own pull request](https://github.com/vaibhavgupta443/changelens/pull/2) (a screenshot of the real comment, posted by the Action):
+
+![The ChangeLens comment on a pull request: a verdict line, the methods to read first, and the existing endpoint the change runs through](docs/pr-comment.png)
+
+And the real output for a real commit in [spring-petclinic](https://github.com/spring-projects/spring-petclinic) ("Enforce unique pet names per owner"):
 
 > **4 Java files** | 1 new classes, 0 removed, 4 changed, 0 moved or renamed | **9 methods with new or changed logic** | 0 safe to skim
 >

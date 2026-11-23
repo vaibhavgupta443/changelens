@@ -18,6 +18,10 @@ import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.ImportDeclaration;
 import com.github.javaparser.ast.Modifier;
 import com.github.javaparser.ast.Node;
+import com.github.javaparser.printer.DefaultPrettyPrinter;
+import com.github.javaparser.printer.configuration.DefaultConfigurationOption;
+import com.github.javaparser.printer.configuration.DefaultPrinterConfiguration;
+import com.github.javaparser.printer.configuration.DefaultPrinterConfiguration.ConfigOption;
 import com.github.javaparser.ast.body.AnnotationDeclaration;
 import com.github.javaparser.ast.body.BodyDeclaration;
 import com.github.javaparser.ast.body.CallableDeclaration;
@@ -88,6 +92,19 @@ public final class JavaSnapshotBuilder {
     private static final Pattern GENERICS = Pattern.compile("<[^<>]*>");
     private static final Pattern WS = Pattern.compile("\\s+");
 
+
+    /**
+     * Source text of a node whose comments are already stripped. Printing through Node.toString() also runs JavaParser's comment pass,
+     * which sorts the siblings of every node it prints, so a method with a large array initialiser cost time quadratic in its size
+     * (found by profiling SootUp: about a third of the analysis). With comment printing off the text is the same and the pass is skipped.
+     */
+    private static final DefaultPrettyPrinter PRINTER = new DefaultPrettyPrinter(
+            new DefaultPrinterConfiguration().removeOption(new DefaultConfigurationOption(ConfigOption.PRINT_COMMENTS)));
+
+    private static String text(Node n) {
+        return PRINTER.print(n);
+    }
+
     private final ParserConfiguration config = new ParserConfiguration().setLanguageLevel(ParserConfiguration.LanguageLevel.JAVA_21);
 
     private record Parsed(String path, String source, CompilationUnit cu, String pkg,
@@ -153,10 +170,13 @@ public final class JavaSnapshotBuilder {
             parsedByPath.put(f.path(), new Parsed(f.path(), f.content(), cu, pkg, imports, wild, statics));
         }
         long tPass1 = System.nanoTime();
+        // Finding the types of a file walks its whole tree, so it is done once per file and in parallel; both passes reuse the lists.
+        List<Parsed> parsedFiles = new ArrayList<>(parsedByPath.values());
+        List<List<TypeDeclaration<?>>> typesOfFile = parsedFiles.parallelStream().map(p -> topAndNestedTypes(p.cu())).toList();
         // pass 1: declare every type
-        for (Parsed p : parsedByPath.values()) {
-            for (TypeDeclaration<?> td : topAndNestedTypes(p.cu())) {
-                declare(p, td);
+        for (int i = 0; i < parsedFiles.size(); i++) {
+            for (TypeDeclaration<?> td : typesOfFile.get(i)) {
+                declare(parsedFiles.get(i), td);
             }
         }
         long tPass2 = System.nanoTime();
@@ -166,9 +186,9 @@ public final class JavaSnapshotBuilder {
         record Work(Parsed p, TypeDeclaration<?> td) {
         }
         List<Work> work = new ArrayList<>();
-        for (Parsed p : parsedByPath.values()) {
-            for (TypeDeclaration<?> td : topAndNestedTypes(p.cu())) {
-                work.add(new Work(p, td));
+        for (int i = 0; i < parsedFiles.size(); i++) {
+            for (TypeDeclaration<?> td : typesOfFile.get(i)) {
+                work.add(new Work(parsedFiles.get(i), td));
             }
         }
         List<TypeModel> built = work.parallelStream().map(w -> buildType(w.p(), w.td())).toList();
@@ -427,16 +447,16 @@ public final class JavaSnapshotBuilder {
         if (body.isPresent()) {
             CallableDeclaration<?> normalised = (CallableDeclaration<?>) cd.clone();
             stripComments(normalised);
-            norm = WS.matcher(normalised.toString()).replaceAll(" ");
+            norm = WS.matcher(text(normalised)).replaceAll(" ");
             CallableDeclaration<?> renamed = (CallableDeclaration<?>) normalised.clone();
             alphaRename(renamed);
-            alpha = bodyOf(renamed).map(bd -> WS.matcher(bd.toString()).replaceAll(" ")).orElse(""); // body only, locals renamed
+            alpha = bodyOf(renamed).map(bd -> WS.matcher(text(bd)).replaceAll(" ")).orElse(""); // body only, locals renamed
             stmts = (int) body.get().findAll(Statement.class).stream().filter(s -> !(s instanceof BlockStmt)).count();
             facts = new BehaviorExtractor(p, typeFqn, cd, body.get()).extract();
         } else {
             CallableDeclaration<?> normalised = (CallableDeclaration<?>) cd.clone();
             stripComments(normalised);
-            norm = WS.matcher(normalised.toString()).replaceAll(" ");
+            norm = WS.matcher(text(normalised)).replaceAll(" ");
             alpha = "";
         }
         return new MethodModel(id, typeFqn, name, signature, ret, paramTypes, paramNames, modifiers(cd.getModifiers()),
@@ -456,7 +476,7 @@ public final class JavaSnapshotBuilder {
     private static String normExpr(Expression e) {
         Expression c = e.clone();
         c.getAllContainedComments().forEach(Comment::remove);
-        return WS.matcher(c.toString()).replaceAll(" ");
+        return WS.matcher(text(c)).replaceAll(" ");
     }
 
     private static void stripComments(Node n) {
@@ -516,7 +536,7 @@ public final class JavaSnapshotBuilder {
     }
 
     private static List<String> annotationTexts(List<? extends AnnotationExpr> anns) {
-        return anns.stream().map(a -> WS.matcher(a.toString()).replaceAll(" ")).toList();
+        return anns.stream().map(a -> WS.matcher(text(a)).replaceAll(" ")).toList();
     }
 
     // ------------------------------------------------------------------ layers
@@ -668,7 +688,7 @@ public final class JavaSnapshotBuilder {
         private String cond(Expression e) {
             Expression c = e.clone();
             c.getAllContainedComments().forEach(Comment::remove);
-            return WS.matcher(c.toString()).replaceAll(" ");
+            return WS.matcher(text(c)).replaceAll(" ");
         }
 
         /** Best-effort type of an initialiser for `var x = ...`. Returns null when it cannot be known honestly. */

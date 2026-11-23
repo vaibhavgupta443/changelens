@@ -202,7 +202,7 @@ public final class PrComment {
     }
 
     /** Type.method when the receiver is known, just method() when it could not be resolved, new Type(...) for constructors. */
-    static String callLabel(CallSite c) {
+    public static String callLabel(CallSite c) {
         if ("<init>".equals(c.targetMethod())) {
             return "new " + simple(c.targetType()) + "(...)";
         }

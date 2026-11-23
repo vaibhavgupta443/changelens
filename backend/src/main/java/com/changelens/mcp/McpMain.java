@@ -44,6 +44,9 @@ public final class McpMain {
         };
         var server = new ChangeLensMcpServer(workspace).start(in, System.out);
         inputEnded.await();
+        // A client that sends one message and closes the pipe (a quick test from a shell) would otherwise lose the reply; a real client
+        // keeps the pipe open for as long as it wants answers.
+        Thread.sleep(1500);
         server.close();
         System.exit(0);
     }

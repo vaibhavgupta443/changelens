@@ -4,7 +4,20 @@
 
 ChangeLens reads the code of a Java pull request with a real parser and tells the reviewer, at every level: which packages, classes and methods changed, what the new behaviour is (new branches, new calls, new exceptions), which **existing endpoints** run through the changed code, and what is only a move, a rename or a reformat. It posts that as one comment on the PR, with a diagram.
 
-It does not guess and the analysis never uses an AI model: every statement comes from analysing the code. AI assistants can use that analysis through [MCP](#use-it-from-an-ai-assistant-mcp), and it stays checkable when they do.
+The analysis is deterministic: every statement comes from analysing the code, and no model is involved in it. On top of it sits an AI layer built to keep models honest. An [MCP server](#use-it-from-an-ai-assistant-mcp) lets assistants such as Claude and Cursor query the analysis, [retrieval over the repository's git history](#use-it-from-an-ai-assistant-mcp) finds the commits that answer a question, and [Ask](#ask-a-question-and-get-only-what-the-engine-confirms) has a model answer in claims that are checked against the engine before you see them.
+
+```mermaid
+flowchart LR
+  G[(git history)] --> E["Analysis engine<br/>JavaParser · call graph · diff"]
+  G --> H["History index<br/>BM25 + local embeddings"]
+  E --> F["Fact layer<br/>citable ids · verify"]
+  H --> F
+  F --> A["GitHub Action<br/>one PR comment"]
+  F --> M["MCP server<br/>10 tools"]
+  F --> Q["Ask<br/>retrieve, model, verify"]
+  M --> C["Claude · Cursor · any MCP client"]
+  Q --> L["Any OpenAI-compatible model"]
+```
 
 ## Why
 
@@ -177,6 +190,25 @@ Meaning helps on paraphrases and does nothing for questions that already share w
 - The first meaning-based search of a repository embeds its commits once (6 to 28 s on a laptop CPU) and keeps the vectors in `~/.changelens/cache` (`CHANGELENS_CACHE` moves it, `off` disables it; it holds commit ids and numbers, no message text). After that a question takes about 25 ms.
 - Analysing a large repository takes time: about 20 s for 25 commits of SootUp (2,400 Java files) on a laptop.
 
+## Ask a question and get only what the engine confirms
+
+`Ask` is retrieval-augmented generation with a gate at the end. It exists because a model that explains code will sometimes invent a method, a fact or a commit, and a reviewer cannot tell which sentence that is.
+
+1. **Retrieve.** Without any model, ChangeLens gathers the evidence: the changed methods with the complete list of facts found, the endpoints that reach them, the changed methods no test covers, the earlier commits on the touched files, and the commits that match the question (keywords and meaning).
+2. **Generate.** A model is asked for *claims as data*: a sentence plus the method ids, facts and commit ids it relies on, copied from the evidence.
+3. **Verify.** Every citation is checked against the engine. An id the change does not contain, a fact the engine did not produce for that method, or a commit that is not in the history gets the claim dropped, and the answer lists what was dropped and why. A claim that cites nothing is dropped however plausible it sounds.
+
+```bash
+export CHANGELENS_LLM_URL=https://openrouter.ai/api/v1     # any OpenAI-compatible server; http://localhost:11434/v1 for Ollama
+export CHANGELENS_LLM_MODEL=<model id>
+export CHANGELENS_LLM_KEY=<key, if the server needs one>
+java -cp backend/target/changelens-mcp.jar com.changelens.ask.AskMain <repo folder> origin/main HEAD "what could break because of this change?"
+```
+
+One analysis and one model request per question, temperature 0, reply capped at 1,500 tokens. `--show-evidence` prints exactly what the model is given, and that is all it sees of your code. No vendor is built in; nothing is sent anywhere you did not point it at.
+
+**What the gate guarantees, and what it does not.** It guarantees that nothing in the answer is invented: every id exists, every fact was produced by the engine for the method it is attached to, every commit is in the history. It does not guarantee that a verified claim answers your question well, or that its wording is a fair summary of the facts it cites. The gate is tested with a scripted model so that every outcome is exact: invented method, invented fact, a true fact attached to the wrong method, invented commit, a claim with no citation, a reply that is not JSON.
+
 ## What it tells you
 
 | Level | What you see |
@@ -219,7 +251,6 @@ cd backend
 ## Roadmap
 
 - Visual web UI (interactive package > class > method map) on top of the REST API
-- An assistant that answers questions about a change and may only say what `verify_claims` confirms
 - A check of a pull request description against what the change does: a model turns the text into claims, the engine decides which are true
 - Optional plain-English narration where every sentence cites a fact (the `ai-service/` folder holds early, experimental building blocks and is not used by the Action)
 - Multi-repository changes: match HTTP and message contracts across repos
